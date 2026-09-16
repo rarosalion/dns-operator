@@ -1,0 +1,36 @@
+image:
+  repository: ghcr.io/rarosalion/dns-operator
+  tag: "0.1.0"
+
+namespace: dns-operator
+
+opnsense:
+  host: https://opnsense.example.com
+  verifyTLS: true
+  # Credentials for a dedicated OPNsense API user, granted only the "Services: Unbound DNS"
+  # privilege - nothing else. Set via --set or a separate values file kept out of git, or wire to
+  # your secret manager of choice via whatever templating your deploy pipeline already uses.
+  apiKey: ""
+  apiSecret: ""
+
+dns:
+  # Domains this operator is allowed to create aliases in. Anything outside this list is rejected,
+  # even if requested via a DNSAlias CR or an Ingress annotation.
+  allowedDomains:
+    - apps.example.internal
+
+  # Existing OPNsense host overrides this operator is allowed to point aliases at (e.g. your
+  # ingress controller's VIP, already set up as its own host override). It never creates a host
+  # override (an A record) itself - only aliases attached to one of these.
+  allowedTargets:
+    - ingress.apps.example.internal
+
+  # Used when a DNSAlias or Ingress doesn't specify its own target. Must be one of allowedTargets.
+  defaultTarget: ingress.apps.example.internal
+
+  # When true, a pre-existing alias that isn't operator-managed gets adopted (re-tagged as owned by
+  # the requesting resource) instead of rejected - but only if it already points at the requested
+  # target. Off by default: adopting a hand-made record changes what "deleting this resource" does
+  # to it (the operator will now delete it too), which is worth opting into deliberately rather
+  # than getting by default.
+  adoptUnmanaged: false

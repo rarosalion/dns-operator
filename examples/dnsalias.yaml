@@ -1,0 +1,10 @@
+# Example - target is omitted here, so it falls back to the operator's configured
+# DNS_DEFAULT_TARGET.
+apiVersion: dns.rarosalion.github.io/v1
+kind: DNSAlias
+metadata:
+  name: myapp
+  namespace: myapp
+spec:
+  hostname: myapp
+  domain: apps.example.internal

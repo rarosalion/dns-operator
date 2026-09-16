@@ -1,0 +1,42 @@
+name: Publish
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read chart version
+        id: version
+        run: echo "version=$(grep '^version:' chart/Chart.yaml | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - uses: azure/setup-helm@v5
+
+      - name: Log in to GHCR (docker)
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Log in to GHCR (helm)
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push image
+        run: |
+          docker build \
+            -t ghcr.io/rarosalion/dns-operator:${{ steps.version.outputs.version }} \
+            -t ghcr.io/rarosalion/dns-operator:latest \
+            .
+          docker push ghcr.io/rarosalion/dns-operator:${{ steps.version.outputs.version }}
+          docker push ghcr.io/rarosalion/dns-operator:latest
+
+      - name: Package and push chart
+        run: |
+          helm package chart --version ${{ steps.version.outputs.version }} --app-version ${{ steps.version.outputs.version }}
+          helm push dns-operator-${{ steps.version.outputs.version }}.tgz oci://ghcr.io/rarosalion/charts

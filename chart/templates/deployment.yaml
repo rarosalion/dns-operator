@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dns-operator
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dns-operator
+  template:
+    metadata:
+      labels:
+        app: dns-operator
+    spec:
+      serviceAccountName: dns-operator
+      containers:
+        - name: operator
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          env:
+            - name: OPNSENSE_HOST
+              value: {{ .Values.opnsense.host | quote }}
+            - name: OPNSENSE_VERIFY_TLS
+              value: {{ .Values.opnsense.verifyTLS | quote }}
+            - name: OPNSENSE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: opnsense-api
+                  key: key
+            - name: OPNSENSE_API_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: opnsense-api
+                  key: secret
+            - name: DNS_ALLOWED_DOMAINS
+              value: {{ .Values.dns.allowedDomains | join "," | quote }}
+            - name: DNS_ALLOWED_TARGETS
+              value: {{ .Values.dns.allowedTargets | join "," | quote }}
+            - name: DNS_DEFAULT_TARGET
+              value: {{ .Values.dns.defaultTarget | quote }}
+            - name: DNS_ADOPT_UNMANAGED
+              value: {{ .Values.dns.adoptUnmanaged | quote }}

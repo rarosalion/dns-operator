@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dns-operator
+  namespace: {{ .Values.namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: dns-operator
+rules:
+  # Ingresses, cluster-wide - the operator needs to see annotated Ingresses from any app namespace,
+  # and patches its own status annotation back onto them.
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "patch"]
+  # DNSAlias CRs, cluster-wide.
+  - apiGroups: ["dns.rarosalion.github.io"]
+    resources: ["dnsaliases"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["dns.rarosalion.github.io"]
+    resources: ["dnsaliases/status"]
+    verbs: ["patch"]
+  # kopf's own leader-election/progress tracking uses events + a lease per operator instance.
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update"]
+  # kopf's cluster-wide resource discovery watches CRDs to resolve our own CRD's version/scope -
+  # read-only, no access to any actual custom resource data beyond what's granted above.
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: dns-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: dns-operator
+subjects:
+  - kind: ServiceAccount
+    name: dns-operator
+    namespace: {{ .Values.namespace }}

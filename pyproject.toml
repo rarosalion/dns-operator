@@ -1,0 +1,10 @@
+[project]
+name = "dns-operator"
+version = "0.1.0"
+description = "Kubernetes operator that manages OPNsense/Unbound DNS aliases from Ingress resources and DNSAlias custom resources."
+requires-python = ">=3.12"
+dependencies = [
+    "kopf>=1.37",
+    "kubernetes>=31.0",
+    "requests>=2.32",
+]

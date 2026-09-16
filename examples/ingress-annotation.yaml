@@ -1,0 +1,26 @@
+# Example - the operator only picks up Ingress hosts that carry the alias annotation below. Once
+# reconciled, it patches the dns.rarosalion.github.io/alias-status annotation back onto this
+# Ingress with the result (e.g. "ready: myapp.apps.example.internal -> ingress.apps.example.internal
+# (created)", or "conflict: ...").
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: myapp
+  namespace: myapp
+  annotations:
+    dns.rarosalion.github.io/alias: "true"
+    # Optional - overrides the operator's configured default target for this Ingress only. Must
+    # still be one of the operator's configured allowed targets.
+    # dns.rarosalion.github.io/target: ingress.apps.example.internal
+spec:
+  rules:
+    - host: myapp.apps.example.internal
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: myapp
+                port:
+                  number: 80
