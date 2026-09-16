@@ -14,9 +14,17 @@ spec:
         app: dns-operator
     spec:
       serviceAccountName: dns-operator
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: operator
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           env:
             - name: OPNSENSE_HOST
               value: {{ .Values.opnsense.host | quote }}

@@ -2,5 +2,5 @@ apiVersion: v2
 name: dns-operator
 description: Manages OPNsense/Unbound DNS aliases from Kubernetes Ingress resources and DNSAlias custom resources.
 type: application
-version: 0.1.1
-appVersion: "0.1.1"
+version: 0.1.2
+appVersion: "0.1.2"

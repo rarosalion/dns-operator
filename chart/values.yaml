@@ -1,6 +1,6 @@
 image:
   repository: ghcr.io/rarosalion/dns-operator
-  tag: "0.1.1"
+  tag: "0.1.2"
 
 namespace: dns-operator
 
