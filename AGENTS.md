@@ -22,21 +22,17 @@ host overrides - from `DNSAlias` custom resources and annotated `Ingress` resour
   is the layout kopf itself expects for a multi-file operator; a relative/package import would break
   under `kopf run --standalone operator/handlers.py`.
 
-## IMPORTANT: the OPNsense API field shapes here are unverified
+## OPNsense API field shapes: verified 2026-09-16
 
-`operator/opnsense.py`'s `add_alias`/`set_alias` payloads (the `host_alias` object with `enabled`/
-`host`/`hostname`/`domain`/`description` fields) are inferred from OPNsense's general Unbound
-plugin conventions (matching how `host_override` objects behave, confirmed live via
-`searchHostOverride`) - **not confirmed against a live `addHostAlias`/`setHostAlias` call**, since no
-tool exposing those specific actions was available while scaffolding this repo (only
-`delHostAlias` was). Before relying on this operator:
-
-1. Run it locally (see "Local dev workflow" below) against a real OPNsense instance.
-2. Create a throwaway `DNSAlias` in a domain that's safe to experiment in, and confirm
-   `add_alias`/`find_alias` actually round-trip - check the OPNsense UI (Services > Unbound DNS >
-   General, under the parent override's alias list) and the operator's own logs.
-3. If the field names are wrong, the OPNsense API returns a 400 with a body describing the expected
-   shape - fix `opnsense.py` from that, not by guessing again.
+`operator/opnsense.py`'s `add_alias`/`set_alias` payloads were originally guessed (wrapper key
+`host_alias`) and confirmed wrong the first time this was actually run against a live instance -
+OPNsense returned `{"result": "failed"}` with no validation detail. The real wrapper key is
+**`alias`**, discovered from the instance's own `unbound/settings/getHostAlias` (GET, no id) -
+OPNsense's "get the empty-record schema" convention for any model, worth reaching for early instead
+of guessing again from a failed call with no error detail in the body. The field names
+themselves (`enabled`/`host`/`hostname`/`domain`/`description`) were right on the first guess.
+If this ever needs re-deriving (a future OPNsense version, a different model), hit that same
+`get*`-with-no-id endpoint pattern first.
 
 ## Local dev workflow
 
@@ -48,11 +44,18 @@ export OPNSENSE_API_KEY=... OPNSENSE_API_SECRET=...
 export DNS_ALLOWED_DOMAINS=apps.example.internal
 export DNS_ALLOWED_TARGETS=ingress.apps.example.internal
 export DNS_DEFAULT_TARGET=ingress.apps.example.internal
+export KUBE_CONTEXT=docker-desktop   # or whatever your local test cluster's context is named
 kopf run --standalone operator/handlers.py
 ```
 
-`startup()` falls back to `config.load_kube_config()` when not running in-cluster, so this picks up
-whatever kubectl context is currently active.
+**Always set `KUBE_CONTEXT` explicitly for a local/dev run - never rely on ambient
+current-context.** Confirmed 2026-09-16: in an environment with multiple kubeconfig files merged
+via the `KUBECONFIG` env var, `kubectl config current-context` reported one (harmless, empty
+local) cluster while the `kubernetes` Python client's `load_kube_config()` with no explicit
+`context=` silently resolved to a completely different one - in this case a real production
+cluster, watched read-only (no writes occurred, since nothing had the alias annotation) but not
+what was intended. The fix is the custom `@kopf.on.login()` handler in `handlers.py`, not a plain
+`@kopf.on.startup()` call - see the gotcha below for why that distinction matters.
 
 To test the actual container + Helm chart path (recommended before considering a change done - RBAC
 issues in particular only show up this way, not via raw `kopf run`):
@@ -79,10 +82,26 @@ helm install dns-operator ./chart \
   still a hard conflict even with adoption on - see the `existing["_parent_uuid"] == parent["uuid"]`
   check in `reconcile_alias`. Don't loosen that without discussing it first; it's the line between
   "claim a record that already agrees with us" and "silently repoint someone else's DNS entry".
-- **`patch.metadata.annotations` on Ingress reconciles overwrites the whole annotations dict in the
-  patch**, not just `alias-status` - kopf merges patches at the field level, so this is safe, but
-  don't casually copy that assignment pattern into a handler that needs to set multiple annotation
-  keys across different code paths without re-reading `annotations` first.
+- **`patch.metadata.annotations = {...}` (wholesale reassignment) raises `AttributeError: property
+  'annotations' of 'MetaPatch' object has no setter`.** Confirmed 2026-09-16 running the real
+  operator: this crashed `reconcile_ingress` on every invocation (including retries), which in turn
+  is what surfaced the duplicate-alias race below - the handler kept retrying indefinitely instead
+  of ever reaching a clean, settled state. Assign individual keys into the existing proxy object
+  instead: `patch.metadata.annotations[STATUS_ANNOTATION] = value`.
+- **A `@kopf.timer`'s first firing can race a just-created object's own `on.create`/`on.update`
+  handling**, both seeing "no alias exists yet" and both calling `add_alias`, producing a real
+  duplicate alias in OPNsense (confirmed 2026-09-16, surfaced by the crash above causing repeated
+  retries that widened the race window). Both timers here are declared with `idle=30` specifically
+  to prevent this - don't remove it, and don't assume a lower value is safe without testing the
+  same race again.
+- **kopf has its own built-in login activity (`kopf.login_via_client`) that is completely separate
+  from anything a plain `@kopf.on.startup()` handler does.** It's what kopf's actual watch/patch
+  traffic authenticates through, and it calls `kubernetes.config.load_kube_config()` with no
+  context of its own. Registering a custom `@kopf.on.login()` handler (as `handlers.py` does)
+  replaces it entirely - this is the only way to make `KUBE_CONTEXT` actually take effect; setting
+  up the k8s client config inside `@kopf.on.startup()` looks like it should work and visibly does
+  nothing for kopf's own connection (confirmed 2026-09-16 - an earlier version of this operator
+  loaded the context in `startup()` and still watched the wrong cluster).
 - Unlike `postgresql-operator`'s deliberate lack of a delete handler (dropping a database is
   destructive), this operator *does* delete on CR/annotation removal - a DNS alias is cheap and
   reversible, and leaving stale aliases around indefinitely defeats the point of the ownership

@@ -61,10 +61,13 @@ class OpnsenseClient:
         return None
 
     def add_alias(self, parent_uuid, hostname, domain, description):
+        # The wrapper key is "alias", not "host_alias" - confirmed against a live instance's
+        # own unbound/settings/getHostAlias schema (2026-09-16). Field names themselves
+        # (enabled/host/hostname/domain/description) were correct on the first guess.
         result = self._post(
             "unbound/settings/addHostAlias",
             json={
-                "host_alias": {
+                "alias": {
                     "enabled": "1",
                     "host": parent_uuid,
                     "hostname": hostname,
@@ -81,7 +84,7 @@ class OpnsenseClient:
         result = self._post(
             f"unbound/settings/setHostAlias/{uuid}",
             json={
-                "host_alias": {
+                "alias": {
                     "enabled": "1",
                     "host": parent_uuid,
                     "hostname": hostname,
