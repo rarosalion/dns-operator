@@ -106,3 +106,25 @@ helm install dns-operator ./chart \
   destructive), this operator *does* delete on CR/annotation removal - a DNS alias is cheap and
   reversible, and leaving stale aliases around indefinitely defeats the point of the ownership
   tagging.
+- **A bare `USER 1000` in the Dockerfile (no matching `/etc/passwd` entry) crash-loops the
+  container**, even under `--standalone`: kopf's own peering-identity detection unconditionally
+  calls `getpass.getuser()` -> `pwd.getpwuid(os.getuid())`, which raises `KeyError: uid not found`
+  for a UID with no passwd entry. Confirmed 2026-09-16 deploying the "restricted" PodSecurity fix to
+  the real cluster - the previous working pod had already terminated by the time this surfaced, so
+  briefly there were zero running replicas. `useradd` before switching `USER` fixes it - but note
+  Debian's default `/etc/group` already has a group literally named `operator` (confirmed via the
+  `useradd: group operator exists` error), so name the created user something else (`app`, here) or
+  pass an explicit `-g`.
+- **`cluster-management-talos`'s `helmfile apply` has shown two distinct, unreliable-caching
+  failure modes here** (both confirmed 2026-09-16-17, root cause not fully pinned down): (1) a
+  fresh install under `atomic: true` + `wait: true` created every resource then silently rolled all
+  of it back with no visible error, and a subsequent `helmfile apply` then reported "no diff" even
+  though nothing existed on the cluster; (2) after clearing the chart cache
+  (`helmfile cache cleanup`), an upgrade that `helmfile diff` correctly showed as changed reported
+  "Release has been upgraded... REVISION: 2" without the Deployment's `.metadata.generation` or
+  image actually changing on the cluster - `helm history` still showed only revision 1. Both times,
+  a plain `helm upgrade --install ... --set ...` (bypassing helmfile, values reconstructed from
+  `values.yaml.gotmpl` by hand) produced a real, verifiable change immediately. If a `helmfile
+  apply` here ever looks like it succeeded, verify independently
+  (`kubectl get deploy -o jsonpath='{.metadata.generation}'` and the running image) rather than
+  trusting its own "Upgrade complete" output - and reach for plain `helm` directly if it disagrees.
