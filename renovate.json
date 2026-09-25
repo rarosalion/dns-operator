@@ -5,6 +5,6 @@
     "enabled": true
   },
   "pip-compile": {
-    "enabled": true
+    "managerFilePatterns": ["/(^|/)requirements\\.txt$/"]
   }
 }
