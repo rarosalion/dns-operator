@@ -1,0 +1,6 @@
+# Source for requirements.txt (the hash-locked file actually installed in the image). Keep these
+# versions in sync with the floors in pyproject.toml, and regenerate requirements.txt after any
+# change here - see the instructions at the top of that file.
+kopf==1.37.5
+kubernetes==31.0.0
+requests==2.32.5
