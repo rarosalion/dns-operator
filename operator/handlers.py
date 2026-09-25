@@ -63,6 +63,11 @@ def startup(memo: kopf.Memo, **_):
         api_key=os.environ["OPNSENSE_API_KEY"],
         api_secret=os.environ["OPNSENSE_API_SECRET"],
         verify_tls=os.environ.get("OPNSENSE_VERIFY_TLS", "true").lower() != "false",
+        allow_insecure_transport=os.environ.get(
+            "OPNSENSE_ALLOW_INSECURE_TRANSPORT", "false"
+        ).strip().lower()
+        == "true",
+        reconfigure_min_interval=float(os.environ.get("OPNSENSE_RECONFIGURE_MIN_INTERVAL", "5")),
     )
 
 
@@ -70,13 +75,28 @@ def _ingress_hosts(spec):
     return sorted({rule["host"] for rule in spec.get("rules", []) if rule.get("host")})
 
 
-@kopf.on.create("networking.k8s.io", "v1", "ingresses")
-@kopf.on.update("networking.k8s.io", "v1", "ingresses")
+def _alias_enabled(value, **_):
+    return (value or "").lower() == "true"
+
+
+# Passed to every Ingress handler below (including on.delete) so kopf's own pre-match only ever
+# considers Ingresses that opted in - not every Ingress cluster-wide. This matters most for
+# on.delete: an unfiltered, non-optional delete handler gets a finalizer added to *every* matching
+# object kopf can see, and with no filter that would mean every Ingress in the cluster, whether or
+# not it ever asked for a DNS alias. If the operator (or OPNsense) is then unreachable, deleting
+# any Ingress - or any namespace containing one - hangs in Terminating.
+_INGRESS_ALIAS_FILTER = {"annotations": {ALIAS_ANNOTATION: _alias_enabled}}
+
+
+@kopf.on.create("networking.k8s.io", "v1", "ingresses", **_INGRESS_ALIAS_FILTER)
+@kopf.on.update("networking.k8s.io", "v1", "ingresses", **_INGRESS_ALIAS_FILTER)
 # idle=30: without this, the timer's first firing can race the initial on.create handling for a
 # just-created object - both see "no existing alias yet" and both call add_alias, producing a
 # duplicate (confirmed 2026-09-16). idle delays a timer's firing until the object has gone quiet
 # for that long, which is more than enough clearance from a create/update's own handling.
-@kopf.timer("networking.k8s.io", "v1", "ingresses", interval=_RESYNC_INTERVAL, idle=30)
+@kopf.timer(
+    "networking.k8s.io", "v1", "ingresses", interval=_RESYNC_INTERVAL, idle=30, **_INGRESS_ALIAS_FILTER
+)
 def reconcile_ingress(spec, meta, namespace, name, patch, logger, memo: kopf.Memo, **_):
     annotations = meta.get("annotations", {})
     if annotations.get(ALIAS_ANNOTATION, "").lower() != "true":
@@ -90,7 +110,7 @@ def reconcile_ingress(spec, meta, namespace, name, patch, logger, memo: kopf.Mem
                 memo.opnsense, memo.dns_config, namespace, "Ingress", name, host, target
             )
         except dns_alias.DNSPolicyError as exc:
-            logger.warning(f"refusing alias for {host}: {exc}")
+            logger.warning(f"refusing alias for {host}: {exc.detail}")
             # patch.metadata.annotations is a property with no setter - individual keys must be
             # assigned into it, a wholesale reassignment raises AttributeError (confirmed
             # 2026-09-16 - the resulting handler failure then retried indefinitely, which is what
@@ -105,7 +125,7 @@ def reconcile_ingress(spec, meta, namespace, name, patch, logger, memo: kopf.Mem
     )
 
 
-@kopf.on.delete("networking.k8s.io", "v1", "ingresses")
+@kopf.on.delete("networking.k8s.io", "v1", "ingresses", **_INGRESS_ALIAS_FILTER)
 def delete_ingress(spec, meta, namespace, name, logger, memo: kopf.Memo, **_):
     annotations = meta.get("annotations", {})
     if annotations.get(ALIAS_ANNOTATION, "").lower() != "true":
@@ -129,7 +149,7 @@ def reconcile_dnsalias(spec, namespace, name, patch, logger, memo: kopf.Memo, **
     except dns_alias.DNSPolicyError as exc:
         patch.status["ready"] = False
         patch.status["message"] = str(exc)
-        logger.warning(str(exc))
+        logger.warning(exc.detail)
         return
 
     patch.status["ready"] = True

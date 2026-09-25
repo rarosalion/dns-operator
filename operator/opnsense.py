@@ -1,3 +1,6 @@
+import threading
+import time
+
 import requests
 
 
@@ -14,10 +17,31 @@ class OpnsenseClient:
     a parent override via a `host` field holding the parent's UUID.
     """
 
-    def __init__(self, base_url, api_key, api_secret, verify_tls=True):
+    _PAGE_SIZE = 1000
+
+    def __init__(
+        self,
+        base_url,
+        api_key,
+        api_secret,
+        verify_tls=True,
+        allow_insecure_transport=False,
+        reconfigure_min_interval=5.0,
+    ):
+        # Basic auth over plain HTTP puts the API key/secret on the wire in cleartext on every
+        # request. Refuse it unless explicitly opted into - a typo'd or copy-pasted http:// host
+        # shouldn't silently downgrade the transport that's carrying credentials.
+        if not base_url.lower().startswith("https://") and not allow_insecure_transport:
+            raise ValueError(
+                f"OPNSENSE_HOST {base_url!r} must use https:// "
+                "(set OPNSENSE_ALLOW_INSECURE_TRANSPORT=true to override)"
+            )
         self.base_url = base_url.rstrip("/")
         self.auth = (api_key, api_secret)
         self.verify_tls = verify_tls
+        self._reconfigure_min_interval = reconfigure_min_interval
+        self._reconfigure_lock = threading.Lock()
+        self._last_reconfigure = None
 
     def _post(self, path, json=None):
         resp = requests.post(
@@ -31,13 +55,23 @@ class OpnsenseClient:
         return resp.json()
 
     def list_host_overrides(self):
-        # rowCount is set high enough to return every override (and its child aliases) in one
-        # page. This operator only ever manages a handful of records, so real pagination isn't
-        # worth the complexity.
-        data = self._post(
-            "unbound/settings/searchHostOverride", json={"current": 1, "rowCount": 1000}
-        )
-        return data.get("rows", [])
+        # Paginated for real: a single instance managed by this operator should only ever have a
+        # handful of records, but silently truncating at one page means an override (and its
+        # child aliases) past that point would never be found by find_override/find_alias - which
+        # would make ownership/conflict checks blind to it rather than erroring loudly.
+        rows = []
+        page = 1
+        while True:
+            data = self._post(
+                "unbound/settings/searchHostOverride",
+                json={"current": page, "rowCount": self._PAGE_SIZE},
+            )
+            page_rows = data.get("rows", [])
+            rows.extend(page_rows)
+            total = data.get("total", len(rows))
+            if len(page_rows) < self._PAGE_SIZE or len(rows) >= total:
+                return rows
+            page += 1
 
     def list_aliases(self):
         aliases = []
@@ -104,4 +138,18 @@ class OpnsenseClient:
         return result
 
     def reconfigure(self):
-        return self._post("unbound/service/reconfigure")
+        # Every alias create/update/delete triggers a real Unbound reload here, and any tenant
+        # with create rights on Ingress/DNSAlias can trigger one - a burst of churn (e.g. a
+        # CI pipeline rolling out many Ingresses at once) would otherwise hammer Unbound with
+        # reloads. Rate-limited to at most one call per `reconfigure_min_interval` seconds by
+        # blocking callers until their turn, never by skipping - every call here still results in
+        # a real reconfigure before returning, so a mutated alias is always applied, just possibly
+        # after a short wait.
+        with self._reconfigure_lock:
+            if self._last_reconfigure is not None:
+                wait = self._last_reconfigure + self._reconfigure_min_interval - time.monotonic()
+                if wait > 0:
+                    time.sleep(wait)
+            result = self._post("unbound/service/reconfigure")
+            self._last_reconfigure = time.monotonic()
+            return result
