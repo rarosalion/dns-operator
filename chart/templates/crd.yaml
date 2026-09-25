@@ -2,6 +2,10 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   name: dnsaliases.dns.rarosalion.github.io
+  annotations:
+    # Kept on `helm uninstall`/rollback: deleting the CRD cascades to every DNSAlias CR, and their
+    # delete finalizers would then hang with no operator left to release them.
+    helm.sh/resource-policy: keep
 spec:
   group: dns.rarosalion.github.io
   scope: Namespaced

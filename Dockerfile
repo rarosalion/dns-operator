@@ -26,4 +26,4 @@ WORKDIR /app
 
 USER 1000
 
-CMD ["kopf", "run", "--standalone", "operator/handlers.py"]
+CMD ["kopf", "run", "--standalone", "--liveness=http://0.0.0.0:8080/healthz", "operator/handlers.py"]

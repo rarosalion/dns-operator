@@ -14,8 +14,16 @@ host overrides - from `DNSAlias` custom resources and annotated `Ingress` resour
   functions both handler types call.
 - `operator/opnsense.py` - the OPNsense API client (`unbound/settings/*HostAlias`,
   `*HostOverride`, `unbound/service/reconfigure`).
-- `chart/` - the Helm chart. `chart/crds/` is installed automatically by `helm install`/`upgrade`
-  and is *not* removed by `helm uninstall` (standard Helm CRD behavior).
+- `chart/` - the Helm chart. The CRD lives in `chart/templates/crd.yaml`, *not* `chart/crds/`:
+  Helm only installs `crds/` on first install and never updates it on `helm upgrade`, so schema
+  changes there would silently never reach the cluster. It carries `helm.sh/resource-policy: keep`
+  so `helm uninstall`/rollback doesn't delete it (which would cascade-delete every `DNSAlias` CR,
+  leaving their finalizers hanging with no operator to release them).
+- **Adopting the CRD into a release (one-time, moving from 0.1.3 to 0.1.4).** A CRD originally
+  installed from `crds/` has no Helm ownership metadata, so the first upgrade with it in
+  `templates/` fails with "exists and cannot be imported into the current release". Label it
+  `app.kubernetes.io/managed-by=Helm` and annotate `meta.helm.sh/release-name` /
+  `meta.helm.sh/release-namespace` first. Metadata-only, no outage.
 - `examples/` - shape of a `DNSAlias` request and an annotated `Ingress`.
 - `requirements.in`/`requirements.txt` - the actual pinned, hash-locked dependency set the
   Dockerfile installs (`pip install --require-hashes -r requirements.txt`). `pyproject.toml`'s
