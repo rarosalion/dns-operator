@@ -17,6 +17,11 @@ host overrides - from `DNSAlias` custom resources and annotated `Ingress` resour
 - `chart/` - the Helm chart. `chart/crds/` is installed automatically by `helm install`/`upgrade`
   and is *not* removed by `helm uninstall` (standard Helm CRD behavior).
 - `examples/` - shape of a `DNSAlias` request and an annotated `Ingress`.
+- `requirements.in`/`requirements.txt` - the actual pinned, hash-locked dependency set the
+  Dockerfile installs (`pip install --require-hashes -r requirements.txt`). `pyproject.toml`'s
+  looser `>=` ranges are for the package spec only; regenerate `requirements.txt` with pip-tools
+  (command in its own header comment) after bumping a version in `requirements.in` - don't hand-edit
+  the hashes.
 - Modules under `operator/` use flat imports (`import dns_alias`, not `from . import dns_alias`) -
   no `__init__.py`. kopf's `run` command puts the target file's own directory on `sys.path`, so this
   is the layout kopf itself expects for a multi-file operator; a relative/package import would break
@@ -115,6 +120,36 @@ helm install dns-operator ./chart \
   Debian's default `/etc/group` already has a group literally named `operator` (confirmed via the
   `useradd: group operator exists` error), so name the created user something else (`app`, here) or
   pass an explicit `-g`.
+- **The Dockerfile's `pip install kopf>=1.37 kubernetes>=31.0 requests>=2.32` line was silently
+  unpinned the whole time.** `RUN` executes under a shell, and `>=1.37` etc. are each parsed as
+  output redirection (`>` truncating/creating a file named `=1.37`), not a version constraint -
+  confirmed by reproducing it outside Docker (2026-09-25): the command that actually ran was
+  `pip install --no-cache-dir kopf kubernetes requests`, fully unpinned, leaving three stray empty
+  files behind. Fixed by installing from `requirements.txt` (`--require-hashes`) instead - if a
+  future dependency line needs adding directly in a `RUN pip install ...`, quote or escape any `>`
+  in it, or better, add it to `requirements.in` and regenerate the lock instead.
+- **A `@kopf.on.delete` handler with no `labels`/`annotations`/`when` filter gets a finalizer added
+  to *every* object of that resource type kopf can see, cluster-wide** - not just the ones the
+  handler's own body logic would actually act on. Confirmed 2026-09-25 against kopf's own
+  `registry._changing.requires_finalizer()`: an unfiltered, non-optional `on.delete("...",
+  "ingresses")` pre-matches (and thus finalizes) every Ingress in the cluster, including ones that
+  never carried the alias annotation - the early `return` inside the handler body only skips *what
+  it does*, not whether kopf blocks deletion on it first. If the operator or OPNsense is then
+  unreachable, deleting any Ingress (or any namespace containing one) hangs in `Terminating`. Fixed
+  by passing the same `annotations={ALIAS_ANNOTATION: <predicate>}` filter used on create/update/
+  timer to `on.delete` too (`_INGRESS_ALIAS_FILTER` in `handlers.py`) - kopf's own pre-match, not
+  just the handler body, needs to agree with "only opted-in Ingresses".  Don't add a new Ingress
+  handler here without the same filter, or this regresses silently (it looks identical in normal
+  operation - the difference only shows up when something's unreachable and someone tries to delete
+  an unrelated Ingress).
+- **The `FROM python:3.12-slim` base image is now pinned by digest**
+  (`python:3.12-slim@sha256:...`), resolved 2026-09-25 from the registry's own manifest-list digest
+  for that tag (`GET /v2/library/python/manifests/3.12-slim` against `registry-1.docker.io`, with an
+  `Accept: application/vnd.oci.image.index.v1+json` header - this is the multi-arch list digest, not
+  one platform's own manifest digest, so it still resolves correctly on both amd64 and arm64). A tag
+  alone is mutable and gives no record of what actually got built. Renovate's default Docker manager
+  handles refreshing this automatically; to redo it by hand, repeat that same registry query rather
+  than trusting `docker pull`'s locally-cached digest, which can be stale.
 - **`cluster-management-talos`'s `helmfile apply` has shown two distinct, unreliable-caching
   failure modes here** (both confirmed 2026-09-16-17, root cause not fully pinned down): (1) a
   fresh install under `atomic: true` + `wait: true` created every resource then silently rolled all

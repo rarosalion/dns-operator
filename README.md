@@ -67,8 +67,30 @@ page-level grant, not scoped to "aliases under this one override" - a leaked key
 domain/target allowlists and ownership tagging above exist at the application level: OPNsense's own
 RBAC can't enforce "only touch children of this one override", so the operator enforces it itself.
 
+The operator refuses a non-`https://` `OPNSENSE_HOST` by default, since Basic auth (how this key is
+sent) puts it on the wire in cleartext over plain HTTP - set `dns.opnsense.allowInsecureTransport`
+only for a lab instance you genuinely can't put behind TLS.
+
 Store the key/secret in whatever secret manager your cluster already uses (Vault, Sealed Secrets,
-SOPS, etc.) and wire it into the chart's `opnsense.apiKey`/`apiSecret` values.
+SOPS, etc.). Either wire the rendered value into the chart's `opnsense.apiKey`/`apiSecret` values,
+or - to avoid the credential passing through Helm values, `--set` shell history, or CI logs at
+all - point `opnsense.existingSecret` at a Secret your secret manager already writes into the
+cluster directly, with `key`/`secret` data keys matching what this chart's own Secret would use.
+
+## Kubernetes-side blast radius
+
+The `ClusterRole` in `chart/templates/rbac.yaml` grants `patch` on `Ingress` objects
+**cluster-wide** (kopf needs it to write the status annotation and its own finalizer/progress
+tracking back onto the Ingresses it manages). A compromised operator pod - not a compromised
+OPNsense key, the operator process itself - could therefore rewrite any Ingress in the cluster, not
+just ones carrying its alias annotation. The delete handler (and the finalizer it requires) are
+filtered to only pre-match Ingresses carrying `dns.rarosalion.github.io/alias: "true"`, so an
+unrelated Ingress is never held in `Terminating` by this operator being unreachable - but the RBAC
+grant itself is still cluster-wide `patch`, same as `postgresql-operator`'s equivalent trade-off for
+its own managed resources. There's no narrower built-in Kubernetes RBAC verb for "patch, but only
+objects with this annotation" - if that matters for your threat model, consider an admission policy
+(e.g. Kyverno/ValidatingAdmissionPolicy) restricting what this ServiceAccount can patch beyond what
+RBAC alone expresses.
 
 ## Deploying
 
@@ -81,6 +103,16 @@ helm install dns-operator ./chart \
 
 Adjust `dns.allowedDomains`, `dns.allowedTargets`, and `dns.defaultTarget` in `chart/values.yaml`
 (or via `--set`) to match your own domains and existing host override(s).
+
+Other `opnsense.*` values worth knowing about:
+
+- `existingSecret`: use a Secret your own secret manager already writes instead of
+  `apiKey`/`apiSecret` (see above).
+- `allowInsecureTransport`: opt-in to a non-`https://` `OPNSENSE_HOST` (see above). Leave `false`
+  unless you have a specific reason not to.
+- `reconfigureMinIntervalSeconds` (default `5`): every alias create/update/delete triggers a real
+  Unbound reload; this caps how often a burst of Ingress/DNSAlias churn can force one, without ever
+  skipping a reload a change actually needs.
 
 See `examples/dnsalias.yaml` and `examples/ingress-annotation.yaml` for the two ways to request an
 alias.
