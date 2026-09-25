@@ -4,14 +4,37 @@ image:
 
 namespace: dns-operator
 
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi
+
 opnsense:
   host: https://opnsense.example.com
   verifyTLS: true
+  # The operator refuses a non-https host (Basic auth over plain HTTP puts the API key/secret on
+  # the wire in cleartext) unless this is explicitly set. Only for a lab/test instance you
+  # genuinely can't put behind TLS - never for anything that carries real credentials.
+  allowInsecureTransport: false
   # Credentials for a dedicated OPNsense API user, granted only the "Services: Unbound DNS"
   # privilege - nothing else. Set via --set or a separate values file kept out of git, or wire to
   # your secret manager of choice via whatever templating your deploy pipeline already uses.
   apiKey: ""
   apiSecret: ""
+  # Name of a pre-existing Secret (with "key"/"secret" data keys) to use instead of apiKey/
+  # apiSecret above. Leave unset to have this chart render its own Secret from apiKey/apiSecret -
+  # set this when your credentials are already managed by an external secret manager (Vault,
+  # Sealed Secrets, SOPS, External Secrets, ...) so they never need to pass through Helm values,
+  # `--set` shell history, or CI logs.
+  existingSecret: ""
+  # Minimum seconds between real Unbound reconfigure/reload calls. Every alias create/update/
+  # delete triggers one, and any tenant with create rights on Ingress/DNSAlias can trigger those -
+  # this caps how often a burst of churn can force Unbound to reload, without ever skipping a
+  # reload a mutation actually needs (callers block until their turn instead).
+  reconfigureMinIntervalSeconds: 5
 
 dns:
   # Domains this operator is allowed to create aliases in. Anything outside this list is rejected,

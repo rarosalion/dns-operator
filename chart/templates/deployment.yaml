@@ -23,22 +23,29 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
           env:
             - name: OPNSENSE_HOST
               value: {{ .Values.opnsense.host | quote }}
             - name: OPNSENSE_VERIFY_TLS
               value: {{ .Values.opnsense.verifyTLS | quote }}
+            - name: OPNSENSE_ALLOW_INSECURE_TRANSPORT
+              value: {{ .Values.opnsense.allowInsecureTransport | quote }}
+            - name: OPNSENSE_RECONFIGURE_MIN_INTERVAL
+              value: {{ .Values.opnsense.reconfigureMinIntervalSeconds | quote }}
             - name: OPNSENSE_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: opnsense-api
+                  name: {{ .Values.opnsense.existingSecret | default "opnsense-api" }}
                   key: key
             - name: OPNSENSE_API_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: opnsense-api
+                  name: {{ .Values.opnsense.existingSecret | default "opnsense-api" }}
                   key: secret
             - name: DNS_ALLOWED_DOMAINS
               value: {{ .Values.dns.allowedDomains | join "," | quote }}
@@ -48,3 +55,12 @@ spec:
               value: {{ .Values.dns.defaultTarget | quote }}
             - name: DNS_ADOPT_UNMANAGED
               value: {{ .Values.dns.adoptUnmanaged | quote }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        # readOnlyRootFilesystem above means anything under the container's own filesystem (e.g.
+        # a library that wants a scratch/lock file, or bytecode caching) needs a writable mount -
+        # this operator otherwise carries no persistent state, so an emptyDir is enough.
+        - name: tmp
+          emptyDir: {}
