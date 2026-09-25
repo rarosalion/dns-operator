@@ -45,15 +45,25 @@ spec:
                 hostname:
                   type: string
                   description: The alias's hostname label, e.g. "myapp".
+                  maxLength: 63
+                  # A single DNS label - notably excludes "*". Without this, a wildcard hostname
+                  # in an otherwise-allowed domain would pass admission and let one tenant claim
+                  # every unclaimed name in that domain (the operator's own validation in
+                  # dns_alias.py rejects this too, defense in depth).
+                  pattern: '^[A-Za-z0-9]([A-Za-z0-9_-]{0,61}[A-Za-z0-9])?$'
                 domain:
                   type: string
                   description: The alias's domain. Must be one of the operator's configured allowed domains.
+                  maxLength: 253
+                  pattern: '^[A-Za-z0-9]([A-Za-z0-9_-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9_-]{0,61}[A-Za-z0-9])?)*$'
                 target:
                   type: string
                   description: >-
                     FQDN of the existing OPNsense host override to alias to. Must be one of the
                     operator's configured allowed targets. Defaults to the operator's configured
                     default target when omitted.
+                  maxLength: 253
+                  pattern: '^[A-Za-z0-9]([A-Za-z0-9_-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9_-]{0,61}[A-Za-z0-9])?)+$'
             status:
               type: object
               properties:
