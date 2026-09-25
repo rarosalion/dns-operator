@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege: none of these jobs need to write anything back to the repo (no PR comments, no
+# releases, no packages) - the default token grant otherwise ends up broader than that, especially
+# on a `pull_request` trigger where the token can come from a forked PR's context.
+permissions:
+  contents: read
+
 jobs:
   lint-python:
     runs-on: ubuntu-latest

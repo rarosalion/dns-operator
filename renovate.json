@@ -4,17 +4,7 @@
   "pep621": {
     "enabled": true
   },
-  "customManagers": [
-    {
-      "customType": "regex",
-      "managerFilePatterns": ["/^Dockerfile$/"],
-      "matchStringsStrategy": "any",
-      "matchStrings": [
-        "(?<depName>kopf)(?<currentValue>[><=]+[\\d.]+)",
-        "(?<depName>kubernetes)(?<currentValue>[><=]+[\\d.]+)",
-        "(?<depName>requests)(?<currentValue>[><=]+[\\d.]+)"
-      ],
-      "datasourceTemplate": "pypi"
-    }
-  ]
+  "pip-compile": {
+    "managerFilePatterns": ["/(^|/)requirements\\.txt$/"]
+  }
 }

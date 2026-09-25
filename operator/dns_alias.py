@@ -1,15 +1,34 @@
 import dataclasses
 import os
+import re
 
 # Every alias this operator creates gets this description prefix, so a reconcile can tell "a
 # record we created" apart from "a record someone made by hand in the OPNsense UI" and never
 # overwrite the latter.
 OWNER_TAG_PREFIX = "managed-by=dns-operator;owner="
 
+# A single DNS label: alphanumeric, may contain internal hyphens/underscores, must not start or
+# end with one, 1-63 chars. Deliberately excludes "*" - without this, `hostname.partition(".")`
+# alone would accept a wildcard hostname like "*.apps.example.internal" as long as its domain is
+# on the allowlist, letting one tenant claim every unclaimed name in a shared domain.
+_LABEL_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9_-]{0,61}[A-Za-z0-9])?$")
+
 
 class DNSPolicyError(Exception):
     """Raised when a requested alias violates the operator's domain/target allowlists, or would
-    conflict with a DNS record this operator doesn't own."""
+    conflict with a DNS record this operator doesn't own.
+
+    Carries two messages: `str(exc)` (`args[0]`) is safe to write back onto the *requesting*
+    object's own status/annotation - any tenant who can read their own Ingress/DNSAlias can read
+    it, so it never names another namespace's owning resource or dumps the operator's full
+    domain/target allowlists. `detail` carries the complete message, including whatever the safe
+    message omits, and is only ever meant for the operator's own logs (pod logs are cluster-admin
+    visible, not tenant visible).
+    """
+
+    def __init__(self, message, detail=None):
+        super().__init__(message)
+        self.detail = message if detail is None else detail
 
 
 def _split_csv(value):
@@ -42,10 +61,19 @@ class Config:
         )
 
 
+def _validate_domain(domain):
+    labels = domain.split(".")
+    if not all(_LABEL_RE.match(label) for label in labels):
+        raise DNSPolicyError(f"{domain!r} is not a valid domain name")
+
+
 def split_fqdn(fqdn):
     hostname, _, domain = fqdn.partition(".")
     if not domain:
         raise DNSPolicyError(f"{fqdn!r} must be a fully-qualified hostname (hostname.domain)")
+    if not _LABEL_RE.match(hostname):
+        raise DNSPolicyError(f"{hostname!r} is not a valid DNS hostname label")
+    _validate_domain(domain)
     return hostname, domain
 
 
@@ -53,11 +81,13 @@ def validate_request(config: Config, fqdn: str, target: str):
     hostname, domain = split_fqdn(fqdn)
     if domain not in config.allowed_domains:
         raise DNSPolicyError(
-            f"domain {domain!r} is not in the allowed domain list {config.allowed_domains}"
+            f"domain {domain!r} is not in the operator's allowed domain list",
+            detail=f"domain {domain!r} is not in the allowed domain list {config.allowed_domains}",
         )
     if target not in config.allowed_targets:
         raise DNSPolicyError(
-            f"target {target!r} is not in the allowed target list {config.allowed_targets}"
+            f"target {target!r} is not in the operator's allowed target list",
+            detail=f"target {target!r} is not in the allowed target list {config.allowed_targets}",
         )
     return hostname, domain
 
@@ -98,7 +128,8 @@ def reconcile_alias(client, config, namespace, kind, name, fqdn, target=None):
     if existing is not None and not owned_by(existing.get("description", ""), namespace, kind, name):
         if is_operator_managed(existing.get("description", "")):
             raise DNSPolicyError(
-                f"{fqdn} is already managed by another resource ({existing['description']})"
+                f"{fqdn} is already managed by another resource",
+                detail=f"{fqdn} is already managed by another resource ({existing['description']})",
             )
         if not (config.adopt_unmanaged and existing["_parent_uuid"] == parent["uuid"]):
             raise DNSPolicyError(
