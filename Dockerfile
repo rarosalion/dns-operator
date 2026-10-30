@@ -2,7 +2,7 @@
 # different image tomorrow with no record of what actually got built. Digest is for the multi-arch
 # manifest list (resolved 2026-09-25 from python:3.12-slim), so this still builds correctly on
 # amd64 and arm64. Bump both together when Renovate (or a manual check) finds a newer digest.
-FROM python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9
+FROM python:3.12-slim@sha256:aa943ce411423c7582288f18707ff66eddcbaeb510502d747a72aeb34f30d159
 
 # The previous unquoted `kopf>=1.37 kubernetes>=31.0 requests>=2.32` here was a real bug, not just
 # a style nit: RUN executes under a shell, and `>=1.37`/`>=31.0`/`>=2.32` are each parsed as an
