@@ -618,9 +618,9 @@ frozenlist==1.8.0 \
     # via
     #   aiohttp
     #   aiosignal
-google-auth==2.58.1 \
-    --hash=sha256:1480461d8b2347e679af758f4003700ea79a59b603c9134e18bfa95e8004ee70 \
-    --hash=sha256:66a63572d0ab629554768544df04018d79178c0bd7439ba31683ac576b79024d
+google-auth==2.62.2 \
+    --hash=sha256:046c61a72d3a847d6df6417a7f0d5cf054e3b82bbcb54fb1e69d47880964049c \
+    --hash=sha256:e9bcdb0679b6a4369ac327c5c59f06d92f7b4cd2624e7100294c14632f55a36b
     # via kubernetes
 idna==3.20 \
     --hash=sha256:a7db850025b95ded1eae8a46181a1a6c56c92c96f0e2b005d9ff8dc0210cab44 \
